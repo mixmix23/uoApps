@@ -34,7 +34,6 @@ def perform_search(driver, wait, search_term, max_price):
     time.sleep(1)
 
     rows = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "tr.cdk-row")))
-
     print(f"\nChecking for matches at {time.strftime('%X')} for '{search_term}'...")
 
     matches_found = False
@@ -83,16 +82,18 @@ def perform_search(driver, wait, search_term, max_price):
     if matches_found:
         play_alert_sound()
     else:
-        print(f"No matches under {max_price:,} for '{search_term}' — lowest was {lowest_price:,}")
+        if lowest_price:
+            print(f"No matches under {max_price:,} for '{search_term}' — lowest was {lowest_price:,}")
+        else:
+            print(f"No results found for '{search_term}'")
 
 
-def start_bot(username, password, search_terms, interval, max_price):
+def start_bot(username, password, term_price_list, interval):
     options = webdriver.ChromeOptions()
     # Local use: NOT headless
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     wait = WebDriverWait(driver, 10)
 
-    # Log in
     driver.get("https://portal.uooutlands.com/login")
     print("Logging in...")
     driver.find_element(By.NAME, "outlandsId").send_keys(username)
@@ -103,8 +104,8 @@ def start_bot(username, password, search_terms, interval, max_price):
 
     try:
         while True:
-            for term in search_terms:
-                perform_search(driver, wait, term.strip(), max_price)
+            for term, price in term_price_list:
+                perform_search(driver, wait, term.strip(), price)
             time.sleep(interval)
     except KeyboardInterrupt:
         print("Stopped by user.")
@@ -113,25 +114,42 @@ def start_bot(username, password, search_terms, interval, max_price):
         # driver.quit()
 
 
-# --- Streamlit GUI ---
+# ---------- STREAMLIT GUI ----------
 st.title("UO Outlands Vendor Search Bot")
 
 with st.form("bot_form"):
     username = st.text_input("UOOutlands Email", value=DEFAULT_EMAIL)
     password = st.text_input("Password", type="password", value=DEFAULT_PASSWORD)
-    search_terms_raw = st.text_area("Search Terms (one per line)")
-    max_price = st.number_input("Max Price (required)", min_value=1, step=1000)
+
+    st.markdown("### Enter one search term and its max price per line")
+    st.caption("Format: search term, max price")
+    raw_input = st.text_area("Search Terms + Max Price (one per line)")
+
     interval = st.slider("Search Interval (seconds)", min_value=30, max_value=600, value=120, step=30)
     submitted = st.form_submit_button("Start Bot")
 
 if submitted:
-    search_entries = [line.strip() for line in search_terms_raw.strip().splitlines() if line.strip()]
+    entries = []
+    errors = []
+
+    for line in raw_input.strip().splitlines():
+        parts = [p.strip() for p in line.split(",", 1)]
+        if len(parts) != 2:
+            errors.append(f"❌ Invalid format: '{line}'")
+            continue
+        term, price_str = parts
+        if not price_str.isdigit():
+            errors.append(f"❌ Invalid price in: '{line}'")
+            continue
+        entries.append((term, int(price_str)))
+
     if not username or not password:
         st.warning("Username and password are required.")
-    elif not search_entries:
-        st.warning("Please enter at least one search term.")
-    elif max_price <= 0:
-        st.warning("Please enter a valid max price.")
+    elif errors:
+        for err in errors:
+            st.error(err)
+    elif not entries:
+        st.warning("Please enter at least one valid search term and price.")
     else:
-        st.success("Bot is starting... check your terminal.")
-        start_bot(username, password, search_entries, interval, max_price)
+        st.success("✅ Bot is starting... check your terminal.")
+        start_bot(username, password, entries, interval)
