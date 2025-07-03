@@ -1,0 +1,5 @@
+streamlit
+selenium
+webdriver-manager
+pygame
+python-dotenv
