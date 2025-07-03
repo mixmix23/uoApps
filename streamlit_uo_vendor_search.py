@@ -78,7 +78,12 @@ def perform_search(driver, wait, search_term, price_limit):
 
 def start_bot(username, password, search_entries, interval):
     options = webdriver.ChromeOptions()
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    options.add_argument("--headless=new")  # REQUIRED on Streamlit Cloud
+    options.add_argument("--no-sandbox")    # Prevents Chrome crash
+    options.add_argument("--disable-dev-shm-usage")  # Fix for low memory
+
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
     wait = WebDriverWait(driver, 10)
 
     try:
