@@ -1,5 +1,7 @@
 import streamlit as st
 import time
+import os
+from dotenv import load_dotenv
 import pygame
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -9,23 +11,34 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+load_dotenv()
+
+DEFAULT_EMAIL = os.getenv("UO_EMAIL")
+DEFAULT_PASSWORD = os.getenv("UO_PASSWORD")
+
+
 def play_alert_sound():
     pygame.mixer.init()
     pygame.mixer.music.load("chime-alert-demo-309545.mp3")
     pygame.mixer.music.play()
 
-def perform_search(driver, wait, search_term, price_limit):
-    lowest_price = None
-    matches_found = False
 
+def perform_search(driver, wait, search_term, max_price):
     driver.get("https://portal.uooutlands.com/vendor-search")
-    search_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='Search']")))
+    search_input = wait.until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='Search']"))
+    )
     search_input.clear()
     search_input.send_keys(search_term)
-    time.sleep(1)
     search_input.send_keys(Keys.RETURN)
+    time.sleep(1)
 
     rows = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "tr.cdk-row")))
+
+    print(f"\nChecking for matches at {time.strftime('%X')} for '{search_term}'...")
+
+    matches_found = False
+    lowest_price = None
     main_window = driver.current_window_handle
 
     for row in rows:
@@ -41,113 +54,84 @@ def perform_search(driver, wait, search_term, price_limit):
             if lowest_price is None or price < lowest_price:
                 lowest_price = price
 
-            if search_term.lower() in name and price <= price_limit:
-                st.success(f"[{search_term}] Match: {name} — {price:,}")
-                driver.execute_script("""
-                    arguments[0].style.backgroundColor = '#39FF14';
-                    arguments[0].style.border = '2px solid black';
-                    arguments[0].style.color = 'black';
-                """, price_el)
+            if search_term.lower() in name:
+                if price < max_price:
+                    print(f"Match: {name} — {price:,}")
 
-                driver.execute_script("""
-                    arguments[0].style.backgroundColor = '#39FF14';
-                    arguments[0].style.border = '2px solid black';
-                    arguments[0].style.color = 'black';
-                """, map_el)
+                    driver.execute_script("""
+                        arguments[0].style.backgroundColor = '#39FF14';
+                        arguments[0].style.border = '2px solid black';
+                        arguments[0].style.color = 'black';
+                    """, price_el)
 
-                try:
+                    driver.execute_script("""
+                        arguments[0].style.backgroundColor = '#39FF14';
+                        arguments[0].style.border = '2px solid black';
+                        arguments[0].style.color = 'black';
+                    """, map_el)
+
                     link = row.find_element(By.TAG_NAME, "a").get_attribute("href")
-                    st.write(f"[Open Listing]({link})", unsafe_allow_html=True)
+                    print(f"Opening listing: {link}")
                     driver.execute_script("window.open(arguments[0], '_blank');", link)
                     driver.switch_to.window(driver.window_handles[-1])
                     driver.switch_to.window(main_window)
-                except Exception as e:
-                    st.warning(f"Could not open listing: {e}")
-
-                matches_found = True
+                    matches_found = True
 
         except Exception as e:
-            st.warning(f"Error parsing row: {e}")
+            print("Error parsing row:", e)
 
     if matches_found:
         play_alert_sound()
     else:
-        st.info(f"[{search_term}] No matches under {price_limit:,} — lowest: {lowest_price:,}" if lowest_price else f"[{search_term}] No listings found")
+        print(f"No matches under {max_price:,} for '{search_term}' — lowest was {lowest_price:,}")
 
-    return matches_found
 
-def start_bot(username, password, search_entries, interval):
+def start_bot(username, password, search_terms, interval, max_price):
     options = webdriver.ChromeOptions()
-    # options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")    # Prevents Chrome crash
-    options.add_argument("--disable-dev-shm-usage")  # Fix for low memory
-
+    # Local use: NOT headless
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-
     wait = WebDriverWait(driver, 10)
 
+    # Log in
+    driver.get("https://portal.uooutlands.com/login")
+    print("Logging in...")
+    driver.find_element(By.NAME, "outlandsId").send_keys(username)
+    driver.find_element(By.NAME, "password").send_keys(password)
+    driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+    wait.until(EC.url_contains("/home"))
+    print("Login successful.")
+
     try:
-        driver.get("https://portal.uooutlands.com/login")
-        driver.find_element(By.NAME, "outlandsId").send_keys(username)
-        driver.find_element(By.NAME, "password").send_keys(password)
-        driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
-        wait.until(EC.url_contains("/home"))
-
-        st.success("Login successful. Bot running...")
-        st.session_state.running = True
-
-        while st.session_state.running:
-            st.write(f"🔍 Checking {len(search_entries)} terms at {time.strftime('%X')}...")
-            any_matches = False
-            for entry in search_entries:
-                term = entry['term']
-                price = entry['price']
-                if perform_search(driver, wait, term, price):
-                    any_matches = True
-                time.sleep(1)
-            if not any_matches:
-                st.write(f"No matches found at {time.strftime('%X')}.")
+        while True:
+            for term in search_terms:
+                perform_search(driver, wait, term.strip(), max_price)
             time.sleep(interval)
-
-    except Exception as e:
-        st.error(f"Error: {e}")
+    except KeyboardInterrupt:
+        print("Stopped by user.")
     finally:
-        st.warning("Bot stopped.")
+        print("Browser left open.")
+        # driver.quit()
 
-# --- Streamlit UI ---
-st.set_page_config(page_title="UO Vendor Bot", layout="centered")
-st.title("UO Outlands Vendor Search Bot — Multi-Term + Price + Stop")
 
-# Initialize session state
-if "running" not in st.session_state:
-    st.session_state.running = False
+# --- Streamlit GUI ---
+st.title("UO Outlands Vendor Search Bot")
 
-with st.form("search_form"):
-    username = st.text_input("UOOutlands Email")
-    password = st.text_input("Password", type="password")
-    st.markdown("**Search Terms** (Format: `term | price` per line. Example: `blank scroll | 500`)")
-    search_terms_text = st.text_area("Search Terms", value="leather commodity (5,000 held per commodity) | 13000")
-    default_price = st.number_input("Default Max Price (used if no price on line)", value=13000, step=500)
-    interval = st.number_input("Search Interval (seconds)", value=120, step=10)
+with st.form("bot_form"):
+    username = st.text_input("UOOutlands Email", value=DEFAULT_EMAIL)
+    password = st.text_input("Password", type="password", value=DEFAULT_PASSWORD)
+    search_terms_raw = st.text_area("Search Terms (one per line)")
+    max_price = st.number_input("Max Price (required)", min_value=1, step=1000)
+    interval = st.slider("Search Interval (seconds)", min_value=30, max_value=600, value=120, step=30)
     submitted = st.form_submit_button("Start Bot")
 
-if submitted and username and password:
-    # Parse lines into search entries with individual price limits
-    search_entries = []
-    for line in search_terms_text.strip().splitlines():
-        parts = [part.strip() for part in line.split("|")]
-        if not parts[0]:
-            continue
-        search_term = parts[0]
-        price = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else default_price
-        search_entries.append({"term": search_term, "price": price})
-
-    if search_entries:
-        start_bot(username, password, search_entries, interval)
+if submitted:
+    search_entries = [line.strip() for line in search_terms_raw.strip().splitlines() if line.strip()]
+    if not username or not password:
+        st.warning("Username and password are required.")
+    elif not search_entries:
+        st.warning("Please enter at least one search term.")
+    elif max_price <= 0:
+        st.warning("Please enter a valid max price.")
     else:
-        st.warning("No valid search terms entered.")
-
-# Stop button
-if st.session_state.running:
-    if st.button("🛑 Stop Bot"):
-        st.session_state.running = False
+        st.success("Bot is starting... check your terminal.")
+        start_bot(username, password, search_entries, interval, max_price)
