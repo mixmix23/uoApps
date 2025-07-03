@@ -133,15 +133,16 @@ if submitted:
     errors = []
 
     for line in raw_input.strip().splitlines():
-        parts = [p.strip() for p in line.split(",", 1)]
+        parts = [p.strip() for p in line.rsplit(",", 1)]
         if len(parts) != 2:
             errors.append(f"❌ Invalid format: '{line}'")
             continue
         term, price_str = parts
-        if not price_str.isdigit():
+        try:
+            price = int(price_str.replace(",", ""))
+            entries.append((term, price))
+        except ValueError:
             errors.append(f"❌ Invalid price in: '{line}'")
-            continue
-        entries.append((term, int(price_str)))
 
     if not username or not password:
         st.warning("Username and password are required.")
