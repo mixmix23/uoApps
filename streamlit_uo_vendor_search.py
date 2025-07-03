@@ -82,7 +82,7 @@ def start_bot(username, password, search_entries, interval):
     options.add_argument("--no-sandbox")    # Prevents Chrome crash
     options.add_argument("--disable-dev-shm-usage")  # Fix for low memory
 
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
     wait = WebDriverWait(driver, 10)
 
