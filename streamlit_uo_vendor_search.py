@@ -78,7 +78,7 @@ def perform_search(driver, wait, search_term, price_limit):
 
 def start_bot(username, password, search_entries, interval):
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless=new")  # REQUIRED on Streamlit Cloud
+    # options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")    # Prevents Chrome crash
     options.add_argument("--disable-dev-shm-usage")  # Fix for low memory
 
