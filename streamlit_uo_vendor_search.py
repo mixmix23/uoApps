@@ -17,7 +17,7 @@ load_dotenv()
 DEFAULT_EMAIL = os.getenv("UO_EMAIL")
 DEFAULT_PASSWORD = os.getenv("UO_PASSWORD")
 
-# --- Session state flags ---
+# Initialize session state flags early
 if 'bot_running' not in st.session_state:
     st.session_state.bot_running = False
 if 'bot_paused' not in st.session_state:
@@ -137,7 +137,7 @@ def threaded_bot(username, password, term_price_list, interval):
         st.session_state.bot_paused = False
         print("Bot stopped.")
 
-# --- Streamlit UI ---
+# Streamlit UI
 st.title("UO Outlands Vendor Search Bot")
 
 with st.form("bot_form"):
@@ -180,7 +180,7 @@ if submitted:
         st.success("✅ Bot is starting... check your terminal.")
         threading.Thread(target=threaded_bot, args=(username, password, entries, interval), daemon=True).start()
 
-# Pause / Resume / Stop Buttons
+# Pause / Resume / Stop buttons outside the form
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -189,6 +189,7 @@ with col1:
             pause_flag.set()
             st.session_state.bot_paused = True
             st.success("Bot paused.")
+            st.experimental_rerun()
     elif st.session_state.bot_paused:
         st.info("Bot is paused.")
 
@@ -198,6 +199,7 @@ with col2:
             pause_flag.clear()
             st.session_state.bot_paused = False
             st.success("Bot resumed.")
+            st.experimental_rerun()
 
 with col3:
     if st.session_state.bot_running:
@@ -205,6 +207,7 @@ with col3:
             stop_flag.set()
             st.session_state.bot_paused = False
             st.success("Bot stopping...")
+            st.experimental_rerun()
 
 if not st.session_state.bot_running and not st.session_state.bot_paused:
     st.info("Bot is not running.")
