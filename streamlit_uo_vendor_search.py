@@ -1,6 +1,7 @@
 import streamlit as st
 import time
 import os
+import threading
 from dotenv import load_dotenv
 import pygame
 from selenium import webdriver
@@ -16,12 +17,19 @@ load_dotenv()
 DEFAULT_EMAIL = os.getenv("UO_EMAIL")
 DEFAULT_PASSWORD = os.getenv("UO_PASSWORD")
 
+# --- Session state flags ---
+if 'bot_running' not in st.session_state:
+    st.session_state.bot_running = False
+if 'bot_paused' not in st.session_state:
+    st.session_state.bot_paused = False
+
+stop_flag = threading.Event()
+pause_flag = threading.Event()
 
 def play_alert_sound():
     pygame.mixer.init()
     pygame.mixer.music.load("chime-alert-demo-309545.mp3")
     pygame.mixer.music.play()
-
 
 def perform_search(driver, wait, search_term, max_price):
     driver.get("https://portal.uooutlands.com/vendor-search")
@@ -87,15 +95,17 @@ def perform_search(driver, wait, search_term, max_price):
         else:
             print(f"No results found for '{search_term}'")
 
+def threaded_bot(username, password, term_price_list, interval):
+    stop_flag.clear()
+    pause_flag.clear()
+    st.session_state.bot_running = True
+    st.session_state.bot_paused = False
 
-def start_bot(username, password, term_price_list, interval):
     options = webdriver.ChromeOptions()
-    # Local use: NOT headless
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     wait = WebDriverWait(driver, 10)
 
     driver.get("https://portal.uooutlands.com/login")
-    print("Logging in...")
     driver.find_element(By.NAME, "outlandsId").send_keys(username)
     driver.find_element(By.NAME, "password").send_keys(password)
     driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
@@ -103,18 +113,31 @@ def start_bot(username, password, term_price_list, interval):
     print("Login successful.")
 
     try:
-        while True:
+        while not stop_flag.is_set():
+            if pause_flag.is_set():
+                print("Bot paused. Waiting...")
+                time.sleep(1)
+                continue
+
             for term, price in term_price_list:
                 perform_search(driver, wait, term.strip(), price)
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        print("Stopped by user.")
+                if stop_flag.is_set() or pause_flag.is_set():
+                    break
+
+            # Wait interval if not paused or stopped
+            for _ in range(interval):
+                if stop_flag.is_set() or pause_flag.is_set():
+                    break
+                time.sleep(1)
+
+    except Exception as e:
+        print("Bot error:", e)
     finally:
-        print("Browser left open.")
-        # driver.quit()
+        st.session_state.bot_running = False
+        st.session_state.bot_paused = False
+        print("Bot stopped.")
 
-
-# ---------- STREAMLIT GUI ----------
+# --- Streamlit UI ---
 st.title("UO Outlands Vendor Search Bot")
 
 with st.form("bot_form"):
@@ -151,6 +174,37 @@ if submitted:
             st.error(err)
     elif not entries:
         st.warning("Please enter at least one valid search term and price.")
+    elif st.session_state.bot_running:
+        st.warning("Bot is already running.")
     else:
         st.success("✅ Bot is starting... check your terminal.")
-        start_bot(username, password, entries, interval)
+        threading.Thread(target=threaded_bot, args=(username, password, entries, interval), daemon=True).start()
+
+# Pause / Resume / Stop Buttons
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.session_state.bot_running and not st.session_state.bot_paused:
+        if st.button("⏸ Pause Bot"):
+            pause_flag.set()
+            st.session_state.bot_paused = True
+            st.success("Bot paused.")
+    elif st.session_state.bot_paused:
+        st.info("Bot is paused.")
+
+with col2:
+    if st.session_state.bot_running and st.session_state.bot_paused:
+        if st.button("▶️ Resume Bot"):
+            pause_flag.clear()
+            st.session_state.bot_paused = False
+            st.success("Bot resumed.")
+
+with col3:
+    if st.session_state.bot_running:
+        if st.button("🛑 Stop Bot"):
+            stop_flag.set()
+            st.session_state.bot_paused = False
+            st.success("Bot stopping...")
+
+if not st.session_state.bot_running and not st.session_state.bot_paused:
+    st.info("Bot is not running.")
