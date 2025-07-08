@@ -101,7 +101,7 @@ def perform_search(term, max_price, username, password):
     except Exception as e:
         print(f"Error in search for '{term}':", e)
     finally:
-        driver.quit()
+        # driver.quit()
 
 def threaded_bot(username, password, term_price_list, interval):
     stop_flag.clear()
