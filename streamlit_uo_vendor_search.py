@@ -12,50 +12,26 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# Optional: refresh app every 3 seconds to update logs
-try:
-    from streamlit_autorefresh import st_autorefresh
-    st_autorefresh(interval=3000, key="logrefresh")
-except:
-    pass  # Safe to run without autorefresh if not installed
-
 load_dotenv()
 
 DEFAULT_EMAIL = os.getenv("UO_EMAIL")
 DEFAULT_PASSWORD = os.getenv("UO_PASSWORD")
 
-# --- Session State Initialization ---
+# Global flags and storage
 if 'bot_running' not in st.session_state:
     st.session_state.bot_running = False
 if 'bot_paused' not in st.session_state:
     st.session_state.bot_paused = False
-if 'pause_flag' not in st.session_state:
-    st.session_state.pause_flag = threading.Event()
-if 'stop_flag' not in st.session_state:
-    st.session_state.stop_flag = threading.Event()
-if 'log_messages' not in st.session_state:
-    st.session_state.log_messages = []
 
-open_drivers = []
+stop_flag = threading.Event()
+pause_flag = threading.Event()
+open_drivers = []  # tracking active browser instances
 
-# --- Logging Helper ---
-def log(message):
-    timestamp = time.strftime("%H:%M:%S")
-    full_message = f"[{timestamp}] {message}"
-    st.session_state.log_messages.append(full_message)
-    if len(st.session_state.log_messages) > 200:
-        st.session_state.log_messages.pop(0)
-
-# --- Sound Notification ---
 def play_alert_sound():
-    try:
-        pygame.mixer.init()
-        pygame.mixer.music.load("chime-alert-demo-309545.mp3")
-        pygame.mixer.music.play()
-    except Exception as e:
-        log(f"Sound error: {e}")
+    pygame.mixer.init()
+    pygame.mixer.music.load("chime-alert-demo-309545.mp3")  # Ensure this file exists
+    pygame.mixer.music.play()
 
-# --- Bot Search Function ---
 def perform_search_loop(term, max_price, username, password, interval):
     options = webdriver.ChromeOptions()
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
@@ -70,9 +46,9 @@ def perform_search_loop(term, max_price, username, password, interval):
         wait.until(EC.url_contains("/home"))
         driver.get("https://portal.uooutlands.com/vendor-search")
 
-        while not st.session_state.stop_flag.is_set():
-            if st.session_state.pause_flag.is_set():
-                log(f"[{term}] Paused.")
+        while not stop_flag.is_set():
+            if pause_flag.is_set():
+                print(f"[{term}] Paused.")
                 time.sleep(1)
                 continue
 
@@ -84,7 +60,7 @@ def perform_search_loop(term, max_price, username, password, interval):
                 time.sleep(1)
 
                 rows = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "tr.cdk-row")))
-                log(f"[{term}] Searching...")
+                print(f"\n[{term}] {time.strftime('%X')} — Searching...")
 
                 matches_found = False
                 lowest_price = None
@@ -103,7 +79,7 @@ def perform_search_loop(term, max_price, username, password, interval):
                             lowest_price = price
 
                         if term.lower() in name and price < max_price:
-                            log(f"[{term}] ✅ Match: {name} — {price:,}")
+                            print(f"[{term}] Match: {name} — {price:,}")
                             driver.execute_script("""
                                 arguments[0].style.backgroundColor = '#39FF14';
                                 arguments[0].style.border = '2px solid black';
@@ -117,34 +93,34 @@ def perform_search_loop(term, max_price, username, password, interval):
                             matches_found = True
 
                     except Exception as e:
-                        log(f"[{term}] Row error: {e}")
+                        print(f"[{term}] Row error: {e}")
 
                 if matches_found:
                     play_alert_sound()
                 else:
                     if lowest_price:
-                        log(f"[{term}] No match under {max_price:,} — lowest was {lowest_price:,}")
+                        print(f"[{term}] No matches under {max_price:,} — lowest was {lowest_price:,}")
                     else:
-                        log(f"[{term}] No results found.")
+                        print(f"[{term}] No results found.")
 
                 for _ in range(interval):
-                    if st.session_state.stop_flag.is_set() or st.session_state.pause_flag.is_set():
+                    if stop_flag.is_set() or pause_flag.is_set():
                         break
                     time.sleep(1)
 
             except Exception as e:
-                log(f"[{term}] Search loop error: {e}")
+                print(f"[{term}] Search loop error: {e}")
                 time.sleep(5)
 
     except Exception as e:
-        log(f"[{term}] Startup error: {e}")
+        print(f"[{term}] Startup error: {e}")
     finally:
-        log(f"[{term}] Exiting search loop. Browser remains open.")
+        print(f"[{term}] Exiting search loop. Browser remains open.")
+        # driver.quit() intentionally removed
 
-# --- Thread Launch ---
 def threaded_bot(username, password, term_price_list, interval):
-    st.session_state.stop_flag.clear()
-    st.session_state.pause_flag.clear()
+    stop_flag.clear()
+    pause_flag.clear()
     st.session_state.bot_running = True
     st.session_state.bot_paused = False
 
@@ -157,16 +133,15 @@ def threaded_bot(username, password, term_price_list, interval):
             ).start()
             time.sleep(2)
     except Exception as e:
-        log(f"Bot startup error: {e}")
+        print("Bot startup error:", e)
     finally:
         st.session_state.bot_running = False
         st.session_state.bot_paused = False
-        log("Bot stopped.")
+        print("Bot stopped.")
 
-# --- UI ---
+# Streamlit UI
 st.title("UO Outlands Vendor Search Bot")
 
-# --- Form ---
 with st.form("bot_form"):
     username = st.text_input("UOOutlands Email", value=DEFAULT_EMAIL)
     password = st.text_input("Password", type="password", value=DEFAULT_PASSWORD)
@@ -206,39 +181,3 @@ if submitted:
     else:
         st.success("✅ Bot is starting... check your terminal.")
         threading.Thread(target=threaded_bot, args=(username, password, entries, interval), daemon=True).start()
-
-# --- Control Buttons ---
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    if st.session_state.bot_running and not st.session_state.bot_paused:
-        if st.button("⏸ Pause Bot"):
-            st.session_state.pause_flag.set()
-            st.session_state.bot_paused = True
-            st.success("Bot paused.")
-            st.experimental_rerun()
-    elif st.session_state.bot_paused:
-        st.info("Bot is paused.")
-
-with col2:
-    if st.session_state.bot_running and st.session_state.bot_paused:
-        if st.button("▶️ Resume Bot"):
-            st.session_state.pause_flag.clear()
-            st.session_state.bot_paused = False
-            st.success("Bot resumed.")
-            st.experimental_rerun()
-
-with col3:
-    if st.session_state.bot_running:
-        if st.button("🛑 Stop Bot"):
-            st.session_state.stop_flag.set()
-            st.session_state.bot_paused = False
-            st.success("Bot stopping...")
-            st.experimental_rerun()
-
-if not st.session_state.bot_running and not st.session_state.bot_paused:
-    st.info("Bot is not running.")
-
-# --- Live Log Display ---
-st.markdown("### 📜 Live Search Log")
-st.code("\n".join(st.session_state.log_messages[-30:]), language="log")
