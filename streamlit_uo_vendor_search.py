@@ -191,8 +191,6 @@ if submitted:
         st.success("✅ Bot is starting... check below for results.")
         threading.Thread(target=threaded_bot, args=(username, password, entries, interval), daemon=True).start()
 
-if not st.session_state.bot_running and not st.session_state.bot_paused:
-    st.info("Bot is not running.")
 
 # --- Results Output ---
 st.markdown("### 🔍 Live Search Results")
