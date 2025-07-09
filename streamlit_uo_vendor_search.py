@@ -17,20 +17,27 @@ load_dotenv()
 DEFAULT_EMAIL = os.getenv("UO_EMAIL")
 DEFAULT_PASSWORD = os.getenv("UO_PASSWORD")
 
-# Global flags and storage
+# --- Session State Initialization ---
 if 'bot_running' not in st.session_state:
     st.session_state.bot_running = False
 if 'bot_paused' not in st.session_state:
     st.session_state.bot_paused = False
+if 'pause_flag' not in st.session_state:
+    st.session_state.pause_flag = threading.Event()
+if 'stop_flag' not in st.session_state:
+    st.session_state.stop_flag = threading.Event()
+if 'search_results' not in st.session_state:
+    st.session_state.search_results = []
 
-stop_flag = threading.Event()
-pause_flag = threading.Event()
-open_drivers = []  # tracking active browser instances
+open_drivers = []
 
 def play_alert_sound():
-    pygame.mixer.init()
-    pygame.mixer.music.load("chime-alert-demo-309545.mp3")  # Ensure this file exists
-    pygame.mixer.music.play()
+    try:
+        pygame.mixer.init()
+        pygame.mixer.music.load("chime-alert-demo-309545.mp3")
+        pygame.mixer.music.play()
+    except Exception as e:
+        st.session_state.search_results.append(f"[Sound Error] {e}")
 
 def perform_search_loop(term, max_price, username, password, interval):
     options = webdriver.ChromeOptions()
@@ -46,9 +53,8 @@ def perform_search_loop(term, max_price, username, password, interval):
         wait.until(EC.url_contains("/home"))
         driver.get("https://portal.uooutlands.com/vendor-search")
 
-        while not stop_flag.is_set():
-            if pause_flag.is_set():
-                print(f"[{term}] Paused.")
+        while not st.session_state.stop_flag.is_set():
+            if st.session_state.pause_flag.is_set():
                 time.sleep(1)
                 continue
 
@@ -60,7 +66,8 @@ def perform_search_loop(term, max_price, username, password, interval):
                 time.sleep(1)
 
                 rows = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "tr.cdk-row")))
-                print(f"\n[{term}] {time.strftime('%X')} — Searching...")
+                timestamp = time.strftime("%H:%M:%S")
+                st.session_state.search_results.append(f"[{timestamp}] [{term}] Searching...")
 
                 matches_found = False
                 lowest_price = None
@@ -79,7 +86,8 @@ def perform_search_loop(term, max_price, username, password, interval):
                             lowest_price = price
 
                         if term.lower() in name and price < max_price:
-                            print(f"[{term}] Match: {name} — {price:,}")
+                            msg = f"[{term}] ✅ Match: {name} — {price:,}"
+                            st.session_state.search_results.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
                             driver.execute_script("""
                                 arguments[0].style.backgroundColor = '#39FF14';
                                 arguments[0].style.border = '2px solid black';
@@ -93,34 +101,36 @@ def perform_search_loop(term, max_price, username, password, interval):
                             matches_found = True
 
                     except Exception as e:
-                        print(f"[{term}] Row error: {e}")
+                        st.session_state.search_results.append(f"[{term}] Row error: {e}")
 
                 if matches_found:
                     play_alert_sound()
                 else:
+                    ts = time.strftime('%H:%M:%S')
                     if lowest_price:
-                        print(f"[{term}] No matches under {max_price:,} — lowest was {lowest_price:,}")
+                        st.session_state.search_results.append(
+                            f"[{ts}] [{term}] No matches under {max_price:,} — lowest was {lowest_price:,}"
+                        )
                     else:
-                        print(f"[{term}] No results found.")
+                        st.session_state.search_results.append(f"[{ts}] [{term}] No results found.")
 
                 for _ in range(interval):
-                    if stop_flag.is_set() or pause_flag.is_set():
+                    if st.session_state.stop_flag.is_set() or st.session_state.pause_flag.is_set():
                         break
                     time.sleep(1)
 
             except Exception as e:
-                print(f"[{term}] Search loop error: {e}")
+                st.session_state.search_results.append(f"[{term}] Search loop error: {e}")
                 time.sleep(5)
 
     except Exception as e:
-        print(f"[{term}] Startup error: {e}")
+        st.session_state.search_results.append(f"[{term}] Startup error: {e}")
     finally:
-        print(f"[{term}] Exiting search loop. Browser remains open.")
-        # driver.quit() intentionally removed
+        st.session_state.search_results.append(f"[{term}] Exiting search loop. Browser remains open.")
 
 def threaded_bot(username, password, term_price_list, interval):
-    stop_flag.clear()
-    pause_flag.clear()
+    st.session_state.stop_flag.clear()
+    st.session_state.pause_flag.clear()
     st.session_state.bot_running = True
     st.session_state.bot_paused = False
 
@@ -133,13 +143,12 @@ def threaded_bot(username, password, term_price_list, interval):
             ).start()
             time.sleep(2)
     except Exception as e:
-        print("Bot startup error:", e)
+        st.session_state.search_results.append(f"[Startup] Error: {e}")
     finally:
         st.session_state.bot_running = False
         st.session_state.bot_paused = False
-        print("Bot stopped.")
 
-# Streamlit UI
+# --- UI ---
 st.title("UO Outlands Vendor Search Bot")
 
 with st.form("bot_form"):
@@ -179,5 +188,13 @@ if submitted:
     elif st.session_state.bot_running:
         st.warning("Bot is already running.")
     else:
-        st.success("✅ Bot is starting... check your terminal.")
+        st.success("✅ Bot is starting... check below for results.")
         threading.Thread(target=threaded_bot, args=(username, password, entries, interval), daemon=True).start()
+
+if not st.session_state.bot_running and not st.session_state.bot_paused:
+    st.info("Bot is not running.")
+
+# --- Results Output ---
+st.markdown("### 🔍 Live Search Results")
+for line in st.session_state.search_results[-50:]:  # Show last 50 results
+    st.write(line)
