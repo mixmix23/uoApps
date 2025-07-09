@@ -12,29 +12,25 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+# Load environment variables
 load_dotenv()
-
 DEFAULT_EMAIL = os.getenv("UO_EMAIL")
 DEFAULT_PASSWORD = os.getenv("UO_PASSWORD")
 
-# --- Session State Initialization ---
+# Global thread control flags (NOT in session state)
+stop_flag = threading.Event()
+open_drivers = []
+
+# Initialize Streamlit session state
 if 'bot_running' not in st.session_state:
     st.session_state.bot_running = False
-if 'bot_paused' not in st.session_state:
-    st.session_state.bot_paused = False
-if 'pause_flag' not in st.session_state:
-    st.session_state.pause_flag = threading.Event()
-if 'stop_flag' not in st.session_state:
-    st.session_state.stop_flag = threading.Event()
 if 'search_results' not in st.session_state:
     st.session_state.search_results = []
-
-open_drivers = []
 
 def play_alert_sound():
     try:
         pygame.mixer.init()
-        pygame.mixer.music.load("chime-alert-demo-309545.mp3")
+        pygame.mixer.music.load("chime-alert-demo-309545.mp3")  # Ensure this file exists
         pygame.mixer.music.play()
     except Exception as e:
         st.session_state.search_results.append(f"[Sound Error] {e}")
@@ -53,11 +49,7 @@ def perform_search_loop(term, max_price, username, password, interval):
         wait.until(EC.url_contains("/home"))
         driver.get("https://portal.uooutlands.com/vendor-search")
 
-        while not st.session_state.stop_flag.is_set():
-            if st.session_state.pause_flag.is_set():
-                time.sleep(1)
-                continue
-
+        while not stop_flag.is_set():
             try:
                 search_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='Search']")))
                 search_input.clear()
@@ -103,10 +95,10 @@ def perform_search_loop(term, max_price, username, password, interval):
                     except Exception as e:
                         st.session_state.search_results.append(f"[{term}] Row error: {e}")
 
+                ts = time.strftime('%H:%M:%S')
                 if matches_found:
                     play_alert_sound()
                 else:
-                    ts = time.strftime('%H:%M:%S')
                     if lowest_price:
                         st.session_state.search_results.append(
                             f"[{ts}] [{term}] No matches under {max_price:,} — lowest was {lowest_price:,}"
@@ -115,7 +107,7 @@ def perform_search_loop(term, max_price, username, password, interval):
                         st.session_state.search_results.append(f"[{ts}] [{term}] No results found.")
 
                 for _ in range(interval):
-                    if st.session_state.stop_flag.is_set() or st.session_state.pause_flag.is_set():
+                    if stop_flag.is_set():
                         break
                     time.sleep(1)
 
@@ -129,10 +121,8 @@ def perform_search_loop(term, max_price, username, password, interval):
         st.session_state.search_results.append(f"[{term}] Exiting search loop. Browser remains open.")
 
 def threaded_bot(username, password, term_price_list, interval):
-    st.session_state.stop_flag.clear()
-    st.session_state.pause_flag.clear()
+    stop_flag.clear()
     st.session_state.bot_running = True
-    st.session_state.bot_paused = False
 
     try:
         for term, price in term_price_list:
@@ -146,9 +136,8 @@ def threaded_bot(username, password, term_price_list, interval):
         st.session_state.search_results.append(f"[Startup] Error: {e}")
     finally:
         st.session_state.bot_running = False
-        st.session_state.bot_paused = False
 
-# --- UI ---
+# Streamlit UI
 st.title("UO Outlands Vendor Search Bot")
 
 with st.form("bot_form"):
@@ -191,8 +180,7 @@ if submitted:
         st.success("✅ Bot is starting... check below for results.")
         threading.Thread(target=threaded_bot, args=(username, password, entries, interval), daemon=True).start()
 
-
-# --- Results Output ---
+# Display live search results
 st.markdown("### 🔍 Live Search Results")
-for line in st.session_state.search_results[-50:]:  # Show last 50 results
+for line in st.session_state.search_results[-50:]:
     st.write(line)
