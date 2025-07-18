@@ -11,6 +11,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+import re
 
 load_dotenv()
 
@@ -75,7 +76,9 @@ def perform_search_loop(term, max_price, min_qty, username, password, interval):
                         name = name_el.text.lower()
                         price_text = price_el.text.replace(",", "")
                         price = int("".join(filter(str.isdigit, price_text)))
-                        qty = int(qty_el.text.replace(",", ""))
+                        qty_text = qty_el.text.strip()
+                        qty_digits = re.findall(r'\d+', qty_text)
+                        qty = int(qty_digits[0]) if qty_digits else 0
 
                         if lowest_price is None or price < lowest_price:
                             lowest_price = price
