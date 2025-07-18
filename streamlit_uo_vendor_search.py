@@ -32,7 +32,7 @@ def play_alert_sound():
     pygame.mixer.music.load("chime-alert-demo-309545.mp3")  # Ensure this file exists
     pygame.mixer.music.play()
 
-def perform_search_loop(term, max_price, username, password, interval):
+def perform_search_loop(term, max_price, min_qty, username, password, interval):
     options = webdriver.ChromeOptions()
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
     open_drivers.append(driver)
@@ -70,16 +70,18 @@ def perform_search_loop(term, max_price, username, password, interval):
                         name_el = row.find_element(By.CLASS_NAME, "mat-column-name")
                         price_el = row.find_element(By.CLASS_NAME, "mat-column-price")
                         map_el = row.find_element(By.CLASS_NAME, "mat-cell-content")
+                        qty_el = row.find_element(By.CLASS_NAME, "mat-column-amount")
 
                         name = name_el.text.lower()
                         price_text = price_el.text.replace(",", "")
                         price = int("".join(filter(str.isdigit, price_text)))
+                        qty = int(qty_el.text.replace(",", ""))
 
                         if lowest_price is None or price < lowest_price:
                             lowest_price = price
 
-                        if term.lower() in name and price < max_price:
-                            print(f"[{term}] Match: {name} — {price:,}")
+                        if term.lower() in name and price < max_price and qty >= min_qty:
+                            print(f"[{term}] Match: {name} — {price:,} (Qty: {qty})")
                             driver.execute_script("""
                                 arguments[0].style.backgroundColor = '#39FF14';
                                 arguments[0].style.border = '2px solid black';
@@ -99,7 +101,7 @@ def perform_search_loop(term, max_price, username, password, interval):
                     play_alert_sound()
                 else:
                     if lowest_price:
-                        print(f"[{term}] No matches under {max_price:,} — lowest was {lowest_price:,}")
+                        print(f"[{term}] No matches under {max_price:,} with qty ≥ {min_qty:,} — lowest was {lowest_price:,}")
                     else:
                         print(f"[{term}] No results found.")
 
@@ -118,17 +120,17 @@ def perform_search_loop(term, max_price, username, password, interval):
         print(f"[{term}] Exiting search loop. Browser remains open.")
         # driver.quit() intentionally removed
 
-def threaded_bot(username, password, term_price_list, interval):
+def threaded_bot(username, password, term_price_qty_list, interval):
     stop_flag.clear()
     pause_flag.clear()
     st.session_state.bot_running = True
     st.session_state.bot_paused = False
 
     try:
-        for term, price in term_price_list:
+        for term, price, min_qty in term_price_qty_list:
             threading.Thread(
                 target=perform_search_loop,
-                args=(term.strip(), price, username, password, interval),
+                args=(term.strip(), price, min_qty, username, password, interval),
                 daemon=True
             ).start()
             time.sleep(2)
@@ -146,9 +148,9 @@ with st.form("bot_form"):
     username = st.text_input("UOOutlands Email", value=DEFAULT_EMAIL)
     password = st.text_input("Password", type="password", value=DEFAULT_PASSWORD)
 
-    st.markdown("### Enter one search term and its max price per line")
-    st.caption("Format: item name, max price")
-    raw_input = st.text_area("Search Terms + Max Price (one per line)")
+    st.markdown("### Enter one search term, max price, and min quantity per line")
+    st.caption("Format: item name, max price, min qty")
+    raw_input = st.text_area("Search Terms + Max Price + Min Qty (one per line)")
 
     interval = st.slider("Search Interval (seconds)", min_value=30, max_value=600, value=120, step=30)
     submitted = st.form_submit_button("Start Bot")
@@ -158,16 +160,17 @@ if submitted:
     errors = []
 
     for line in raw_input.strip().splitlines():
-        parts = [p.strip() for p in line.rsplit(",", 1)]
-        if len(parts) != 2:
+        parts = [p.strip() for p in line.rsplit(",", 2)]
+        if len(parts) != 3:
             errors.append(f"❌ Invalid format: '{line}'")
             continue
-        term, price_str = parts
+        term, price_str, qty_str = parts
         try:
             price = int(price_str.replace(",", ""))
-            entries.append((term, price))
+            min_qty = int(qty_str.replace(",", ""))
+            entries.append((term, price, min_qty))
         except ValueError:
-            errors.append(f"❌ Invalid price in: '{line}'")
+            errors.append(f"❌ Invalid number in: '{line}'")
 
     if not username or not password:
         st.warning("Username and password are required.")
@@ -175,7 +178,7 @@ if submitted:
         for err in errors:
             st.error(err)
     elif not entries:
-        st.warning("Please enter at least one valid search term and price.")
+        st.warning("Please enter at least one valid search line.")
     elif st.session_state.bot_running:
         st.warning("Bot is already running.")
     else:
